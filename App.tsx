@@ -37,6 +37,7 @@ const App = () => {
     };
   }, []);
 
+  // Start scanning for Bluetooth devices
   const startScanning = () => {
     if (isScanning) return;
 
@@ -51,19 +52,26 @@ const App = () => {
       }
 
       if (device) {
-        console.log('Discovered device:', device.name, device.id);
-        if (!devices.find(d => d.id === device.id)) {
-          setDevices(prevDevices => [...prevDevices, device]);
-        }
+        console.log('Discovered device:', device.name);
+
+        // Add discovered device to list if not already in the list
+        setDevices(prevDevices => {
+          if (!prevDevices.find(d => d.id === device.id)) {
+            return [...prevDevices, device];
+          }
+          return prevDevices;
+        });
       }
     });
   };
 
+  // Stop scanning for devices
   const stopScanning = () => {
     setIsScanning(false);
     manager.stopDeviceScan();
   };
 
+  // Connect to the selected device
   const connectToDevice = (device) => {
     console.log('Connecting to:', device.name);
 
@@ -81,10 +89,10 @@ const App = () => {
             console.error('Monitor error:', error);
             return;
           }
-
           if (characteristic.value) {
             const value = Buffer.from(characteristic.value, 'base64').toString();
-            setTerminalData(prevData => prevData + '\n' + value);
+            console.log('Received data:', value); // Log the received data
+            setTerminalData((prevData) => prevData + '\n' + value);
           }
         });
       })
@@ -93,15 +101,7 @@ const App = () => {
       });
   };
 
-  const extractLuxValue = (data) => {
-    // Check if data is a string that starts with "Lux:"
-    if (data.startsWith("Lux:")) {
-      const luxValue = data.split("Lux:")[1].trim(); // Extract the value after "Lux:"
-      return luxValue ? parseFloat(luxValue) : null;
-    }
-    return null;
-  };
-
+  // Disconnect from the currently connected device
   const disconnectFromDevice = () => {
     if (connectedDevice) {
       connectedDevice
@@ -165,7 +165,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingTop: 50,
     paddingHorizontal: 20,
-    justifyContent: 'space-between',
+    justifyContent: 'space-between',  // Ensure the content is spread out
   },
   title: {
     fontSize: 24,
@@ -178,15 +178,15 @@ const styles = StyleSheet.create({
     color: 'blue',
     marginBottom: 10,
   },
-  scanningText: {
-    fontSize: 16,
-    color: 'blue',
-    marginBottom: 10,
-  },
   deviceItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 10,
+    paddingVertical: 10,
+  },
+  deviceName: {
+    fontSize: 18,
+    color: 'white',  
   },
   connectedContainer: {
     marginTop: 20,
@@ -199,6 +199,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   terminalContainer: {
+    height: 200, // Fixed height for the terminal
     marginTop: 20,
     padding: 10,
     backgroundColor: '#333',
@@ -206,7 +207,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   terminalText: {
-    color: 'white',
+    color: '#fff',
     fontFamily: 'Courier New',
     fontSize: 14,
   },
