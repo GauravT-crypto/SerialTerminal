@@ -1,158 +1,176 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, Button, FlatList, StyleSheet, ScrollView } from 'react-native';
-import { BleManager } from 'react-native-ble-plx';
-import { Buffer } from 'buffer';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, TouchableOpacity, FlatList, ScrollView, StyleSheet, Alert, Switch } from 'react-native';
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import { NavigationContainer } from '@react-navigation/native';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { BleManager, Device } from 'react-native-ble-plx';
 
-const App = () => {
+const manager = new BleManager();
+
+// Bluetooth Connection Tab
+const BluetoothConnectionTab = ({ onDeviceConnected }: any) => {
   const [isScanning, setIsScanning] = useState(false);
-  const [devices, setDevices] = useState([]);
-  const [connectedDevice, setConnectedDevice] = useState(null);
-  const [terminalData, setTerminalData] = useState('');
-  const [manager, setManager] = useState(null);
-
-  const SERVICE_UUID = 'f0c9bbf8-34ea-4c89-bc6e-1b495fd007d0';
-  const CHARACTERISTIC_UUID = 'b90f3039-3347-4292-8f2e-f9c63e58d597';
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
+  const [deviceName, setDeviceName] = useState('No device connected');
 
   useEffect(() => {
-    const bleManager = new BleManager();
-    setManager(bleManager);
-
-    const checkBluetoothState = () => {
-      bleManager.state().then((state) => {
-        console.log('Bluetooth state:', state);
-        if (state === 'PoweredOff') {
-          bleManager.enable().then(() => {
-            console.log('Bluetooth enabled');
-          }).catch((error) => {
-            console.error('Error enabling Bluetooth:', error);
-          });
-        }
-      });
+    const handleStateChange = (state: string) => {
+      if (state === 'PoweredOn') {
+        toggleScan();
+      }
     };
 
-    checkBluetoothState();
+    manager.onStateChange(handleStateChange, true);
 
     return () => {
-      bleManager.destroy();
+      manager.onStateChange(() => {}, true);
     };
   }, []);
 
-  // Start scanning for Bluetooth devices
-  const startScanning = () => {
-    if (isScanning) return;
-
-    setIsScanning(true);
-    setDevices([]);
-
-    console.log('Scanning started...');
-    manager.startDeviceScan([], null, (error, device) => {
-      if (error) {
-        console.error('Scan error:', error);
-        return;
-      }
-
-      if (device) {
-        console.log('Discovered device:', device.name);
-
-        // Add discovered device to list if not already in the list
-        setDevices(prevDevices => {
-          if (!prevDevices.find(d => d.id === device.id)) {
-            return [...prevDevices, device];
-          }
-          return prevDevices;
-        });
-      }
-    });
+  const toggleScan = () => {
+    if (isScanning) {
+      setIsScanning(false);
+      manager.stopDeviceScan();
+    } else {
+      setIsScanning(true);
+      setDevices([]);
+      manager.startDeviceScan([], null, (error, device) => {
+        if (error) {
+          console.error('Scan error:', error);
+          return;
+        }
+        if (device) {
+          setDevices((prevDevices) => {
+            if (!prevDevices.some((d) => d.id === device.id)) {
+              return [...prevDevices, device];
+            }
+            return prevDevices;
+          });
+        }
+      });
+    }
   };
 
-  // Stop scanning for devices
-  const stopScanning = () => {
-    setIsScanning(false);
-    manager.stopDeviceScan();
-  };
+  const connectToDevice = (device: Device) => {
+    if (connectedDevice && connectedDevice.id === device.id) {
+      Alert.alert('Already Connected', 'You are already connected to this device.');
+      return;
+    }
 
-  // Connect to the selected device
-  const connectToDevice = (device) => {
-    console.log('Connecting to:', device.name);
+    setDeviceName('Connecting...');
+    const connectionTimeout = setTimeout(() => {
+      setDeviceName('Connection Timeout');
+      Alert.alert('Connection Error', 'The connection attempt timed out.');
+    }, 10000);
 
-    device
-      .connect()
-      .then((connectedDevice) => {
-        console.log('Connected to:', connectedDevice.name);
-        setConnectedDevice(connectedDevice);
-        return connectedDevice.discoverAllServicesAndCharacteristics();
-      })
-      .then((connectedDevice) => {
-        console.log('Services and characteristics discovered');
-        return connectedDevice.monitorCharacteristicForService(SERVICE_UUID, CHARACTERISTIC_UUID, (error, characteristic) => {
-          if (error) {
-            console.error('Monitor error:', error);
-            return;
-          }
-          if (characteristic.value) {
-            const value = Buffer.from(characteristic.value, 'base64').toString();
-            console.log('Received data:', value); // Log the received data
-            setTerminalData((prevData) => prevData + '\n' + value);
-          }
-        });
+    device.connect()
+      .then((connected) => {
+        clearTimeout(connectionTimeout);
+        setDeviceName(connected.name || 'Unknown Device');
+        setConnectedDevice(connected);
+        onDeviceConnected(connected);
+        return connected.discoverAllServicesAndCharacteristics();
       })
       .catch((error) => {
-        console.error('Failed to connect or discover services:', error);
+        clearTimeout(connectionTimeout);
+        setDeviceName('Connection Error');
+        Alert.alert('Connection Error', 'Unable to connect to the device.');
       });
   };
 
-  // Disconnect from the currently connected device
-  const disconnectFromDevice = () => {
+  const disconnectDevice = () => {
     if (connectedDevice) {
-      connectedDevice
-        .cancelConnection()
+      connectedDevice.cancelConnection()
         .then(() => {
-          console.log('Disconnected from device');
+          setDeviceName('No device connected');
           setConnectedDevice(null);
-          setTerminalData('');
+          Alert.alert('Disconnected', 'The device has been disconnected.');
         })
         .catch((error) => {
-          console.error('Failed to disconnect', error);
+          Alert.alert('Disconnection Error', 'Unable to disconnect from the device.');
         });
+    } else {
+      Alert.alert('No device connected', 'There is no device to disconnect.');
     }
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Bluetooth Scanner</Text>
+    <View style={styles.tabContainer}>
+      <Text style={styles.tabTitle}>Bluetooth Connection</Text>
+      <Text style={styles.deviceLabel}>Connected to: {deviceName}</Text>
 
-      <Button
-        title={isScanning ? 'Stop Scanning' : 'Start Scanning'}
-        onPress={isScanning ? stopScanning : startScanning}
-      />
+      <TouchableOpacity onPress={toggleScan} style={styles.button}>
+        <Text style={styles.buttonText}>{isScanning ? 'Stop Scanning' : 'Start Scanning'}</Text>
+      </TouchableOpacity>
 
-      {isScanning && <Text style={styles.scanningText}>Scanning for devices...</Text>}
-
-      {/* List of discovered device names */}
       <FlatList
         data={devices}
+        keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
-          <View style={styles.deviceItem}>
-            <Text style={styles.deviceName}>
-              {item.name ? item.name : 'Unknown Device'}
-            </Text>
-            <Button title="Connect" onPress={() => connectToDevice(item)} />
-          </View>
+          <TouchableOpacity onPress={() => connectToDevice(item)} style={styles.deviceItem}>
+            <Text style={styles.deviceName}>{item.name || 'Unnamed Device'}</Text>
+          </TouchableOpacity>
         )}
-        keyExtractor={item => item.id}
+        style={styles.deviceList}
       />
 
-      {/* Connected device info */}
-      {connectedDevice && (
-        <View style={styles.connectedContainer}>
-          <Text style={styles.connectedText}>Connected to: {connectedDevice.name}</Text>
-          <Button title="Disconnect" onPress={disconnectFromDevice} />
-        </View>
-      )}
+      <TouchableOpacity onPress={disconnectDevice} style={styles.button}>
+        <Text style={styles.buttonText}>Disconnect</Text>
+      </TouchableOpacity>
+    </View>
+  );
+};
 
-      {/* Terminal for displaying received data */}
-      {connectedDevice && (
-        <ScrollView style={styles.terminalContainer}>
+// Serial Terminal Tab
+const SerialTerminalTab = ({ connectedDevice }: any) => {
+  const [terminalData, setTerminalData] = useState<string>('');
+  const [errorMessage, setErrorMessage] = useState<string>('');
+
+  useEffect(() => {
+    if (connectedDevice) {
+      const serviceUUID = '12345678-1234-1234-1234-123456789abc'; // Replace with correct UUID
+      const characteristicUUID = 'b90f3039-3347-4292-8f2e-f9c63e58d597'; // Replace with correct UUID
+
+      const enableNotifications = async () => {
+        try {
+          await connectedDevice.readCharacteristicForService(serviceUUID, characteristicUUID);
+
+          connectedDevice.monitorCharacteristicForService(
+            serviceUUID,
+            characteristicUUID,
+            (error, characteristic) => {
+              if (error) {
+                setErrorMessage(`Error while reading data: ${error.message}`);
+                return;
+              }
+              if (characteristic && characteristic.value) {
+                const value = characteristic.value;
+                const decodedValue = Buffer.from(value, 'base64').toString('utf8');
+                setTerminalData((prev) => prev + decodedValue + '\n');
+              }
+            }
+          );
+        } catch (error) {
+          setErrorMessage(`Failed to enable notifications: ${error.message}`);
+        }
+      };
+
+      enableNotifications();
+
+      return () => {
+        connectedDevice.cancelNotificationForCharacteristic(serviceUUID, characteristicUUID);
+      };
+    }
+  }, [connectedDevice]);
+
+  return (
+    <View style={styles.tabContainer}>
+      <Text style={styles.tabTitle}>Serial Terminal</Text>
+      {errorMessage ? (
+        <Text style={styles.errorMessage}>{errorMessage}</Text>
+      ) : (
+        <ScrollView style={styles.terminalData}>
           <Text style={styles.terminalText}>{terminalData}</Text>
         </ScrollView>
       )}
@@ -160,56 +178,176 @@ const App = () => {
   );
 };
 
+// Motor Control Tab
+const MotorControlTab = () => {
+  const [motorSpeed, setMotorSpeed] = useState(0);
+
+  const increaseMotorSpeed = () => setMotorSpeed((prev) => prev + 10);
+  const decreaseMotorSpeed = () => setMotorSpeed((prev) => prev - 10);
+
+  return (
+    <View style={styles.tabContainer}>
+      <Text style={styles.tabTitle}>Motor Control</Text>
+      <Text style={styles.motorSpeed}>Motor Speed: {motorSpeed}</Text>
+      <View style={styles.buttonContainer}>
+        <TouchableOpacity onPress={increaseMotorSpeed} style={styles.largeButton}>
+          <Text style={styles.buttonText}>+</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={decreaseMotorSpeed} style={styles.largeButton}>
+          <Text style={styles.buttonText}>-</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+};
+
+// Settings Tab
+const SettingsTab = () => {
+  const [isAutoConnect, setIsAutoConnect] = useState(true);
+
+  const toggleAutoConnect = () => setIsAutoConnect(!isAutoConnect);
+
+  return (
+    <View style={styles.tabContainer}>
+      <Text style={styles.tabTitle}>Settings</Text>
+      <View style={styles.settingsContainer}>
+        <Text style={styles.settingsText}>Auto Connect: </Text>
+        <Switch
+          value={isAutoConnect}
+          onValueChange={toggleAutoConnect}
+          trackColor={{ false: '#767577', true: '#81b0ff' }}
+          thumbColor={isAutoConnect ? '#f5dd4b' : '#f4f3f4'}
+        />
+      </View>
+    </View>
+  );
+};
+
+const Tab = createBottomTabNavigator();
+
+const App = () => {
+  const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
+
+  const handleDeviceConnected = useCallback((device: Device) => {
+    setConnectedDevice(device);
+  }, []);
+
+  return (
+    <NavigationContainer>
+      <Tab.Navigator
+        screenOptions={{
+          headerShown: false,
+          tabBarStyle: {
+            backgroundColor: '#000', // Black background for the tab bar
+            borderTopWidth: 0,
+            height: 60,
+          },
+        }}
+      >
+        <Tab.Screen
+          name="Connection"
+          children={() => <BluetoothConnectionTab onDeviceConnected={handleDeviceConnected} />}
+          options={{
+            tabBarIcon: () => <Ionicons name="bluetooth" size={24} color="#fff" />,
+          }}
+        />
+        <Tab.Screen
+          name="Terminal"
+          children={() => <SerialTerminalTab connectedDevice={connectedDevice} />}
+          options={{
+            tabBarIcon: () => <Ionicons name="terminal" size={24} color="#fff" />,
+          }}
+        />
+        <Tab.Screen
+          name="Motor"
+          component={MotorControlTab}
+          options={{
+            tabBarIcon: () => <Ionicons name="speedometer" size={24} color="#fff" />,
+          }}
+        />
+        <Tab.Screen
+          name="Settings"
+          component={SettingsTab}
+          options={{
+            tabBarIcon: () => <Ionicons name="settings" size={24} color="#fff" />,
+          }}
+        />
+      </Tab.Navigator>
+    </NavigationContainer>
+  );
+};
+
 const styles = StyleSheet.create({
-  container: {
+  tabContainer: {
     flex: 1,
-    paddingTop: 50,
-    paddingHorizontal: 20,
-    justifyContent: 'space-between',  // Ensure the content is spread out
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#000', // Black background for the entire tab container
   },
-  title: {
+  tabTitle: {
     fontSize: 24,
     fontWeight: 'bold',
+    color: '#fff',
     marginBottom: 20,
-    textAlign: 'center',
   },
-  scanningText: {
-    fontSize: 16,
-    color: 'blue',
+  button: {
+    backgroundColor: '#4CAF50',
+    padding: 10,
+    borderRadius: 5,
     marginBottom: 10,
+  },
+  buttonText: {
+    fontSize: 18,
+    color: '#fff',
+  },
+  deviceList: {
+    width: '100%',
   },
   deviceItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-    paddingVertical: 10,
+    padding: 15,
+    backgroundColor: '#333',
+    marginBottom: 5,
+    borderRadius: 5,
   },
   deviceName: {
     fontSize: 18,
-    color: 'white',  
+    color: '#fff',
   },
-  connectedContainer: {
-    marginTop: 20,
-    padding: 10,
-    backgroundColor: '#f0f0f0',
-    borderRadius: 5,
-  },
-  connectedText: {
+  deviceLabel: {
     fontSize: 18,
-    fontWeight: 'bold',
+    color: '#fff',
   },
-  terminalContainer: {
-    height: 200, // Fixed height for the terminal
-    marginTop: 20,
+  motorSpeed: {
+    fontSize: 24,
+    color: '#fff',
+  },
+  settingsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  settingsText: {
+    fontSize: 18,
+    color: '#fff',
+  },
+  largeButton: {
+    backgroundColor: '#4CAF50',
+    padding: 20,
+    borderRadius: 5,
+    margin: 10,
+  },
+  errorMessage: {
+    color: 'red',
+    fontSize: 16,
+  },
+  terminalData: {
     padding: 10,
     backgroundColor: '#333',
-    borderRadius: 5,
-    marginBottom: 20,
+    flex: 1,
   },
   terminalText: {
+    fontSize: 16,
     color: '#fff',
-    fontFamily: 'Courier New',
-    fontSize: 14,
   },
 });
 
