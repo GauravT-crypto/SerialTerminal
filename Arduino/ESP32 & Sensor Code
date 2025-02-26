@@ -1,0 +1,173 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_TSL2591.h>
+#include <Adafruit_SHT31.h>
+
+
+// Default SoftAP credentials
+const char *ssid = "ESP32-SoftAP";  // SoftAP name
+const char *password = "1234567890";  // SoftAP password
+
+
+WebServer server(80);
+
+
+// Initialize sensors
+Adafruit_TSL2591 tsl = Adafruit_TSL2591(12345);  // Initialize TSL2591 sensor
+Adafruit_SHT31 sht31 = Adafruit_SHT31();        // Initialize SHT31 sensor
+
+
+// Wi-Fi credentials from form
+String wifi_ssid = "";
+String wifi_password = "";
+
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+
+  // Start the SoftAP mode
+  WiFi.softAP(ssid, password);
+  Serial.println("ESP32 SoftAP Started");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.softAPIP());
+
+
+  // Initialize I2C for sensors
+  Wire.begin();
+
+
+  // Initialize TSL2591 sensor
+  if (!tsl.begin()) {
+    Serial.println("Couldn't find TSL2591 sensor!");
+    while (1);  // Halt if TSL2591 is not found
+  }
+
+
+  // Initialize SHT31 sensor
+  if (!sht31.begin()) {
+    Serial.println("Couldn't find SHT31 sensor!");
+    // Don't halt, just notify that it couldn't be found
+    Serial.println("SHT31 sensor will not be available.");
+  }
+
+
+  // Serve the main page (simple form for entering Wi-Fi credentials)
+  server.on("/", HTTP_GET, []() {
+    String html = "<html><body>";
+    html += "<h1>Enter Wi-Fi Credentials</h1>";
+    html += "<form action='/set' method='POST'>";
+    html += "<label for='ssid'>SSID:</label><input type='text' name='ssid' required><br>";
+    html += "<label for='password'>Password:</label><input type='password' name='password' required><br>";
+    html += "<input type='submit' value='Submit'>";
+    html += "</form></body></html>";
+    server.send(200, "text/html", html);
+  });
+
+
+  // Handle Wi-Fi credentials submission
+  server.on("/set", HTTP_POST, []() {
+    if (server.hasArg("ssid") && server.hasArg("password")) {
+      wifi_ssid = server.arg("ssid");
+      wifi_password = server.arg("password");
+
+
+      // Debugging: Log received data
+      Serial.println("Received Wi-Fi credentials:");
+      Serial.print("SSID: ");
+      Serial.println(wifi_ssid);
+      Serial.print("Password: ");
+      Serial.println(wifi_password);
+
+
+      // Attempt to connect to the provided Wi-Fi
+      WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
+      int attempts = 0;
+
+
+      while (WiFi.status() != WL_CONNECTED && attempts < 10) {
+        delay(1000);
+        Serial.print(".");
+        attempts++;
+      }
+
+
+      if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("\nConnected to Wi-Fi!");
+        server.send(200, "text/html", "<h1>Connected to Wi-Fi!</h1><p>ESP32 is connected to the network.</p>");
+      } else {
+        Serial.println("\nFailed to connect");
+        server.send(200, "text/html", "<h1>Failed to Connect</h1><p>Could not connect to the Wi-Fi network.</p>");
+      }
+    } else {
+      server.send(400, "text/html", "<h1>Error</h1><p>Invalid credentials.</p>");
+    }
+  });
+
+
+  // Serve sensor data (Lux, Temperature, Humidity)
+  server.on("/data", HTTP_GET, []() {
+    if (wifi_ssid.length() == 0) {
+      server.send(400, "text/plain", "Error: ESP32 not connected to Wi-Fi.");
+      return;
+    }
+
+
+    // Read the TSL2591 luminosity data
+    uint32_t lum = tsl.getFullLuminosity();  // Get the full luminosity reading
+
+
+    // Extract the raw values for full-spectrum and infrared light
+    uint16_t ch0 = lum & 0xFFFF;  // Full spectrum light (visible + infrared)
+    uint16_t ch1 = lum >> 16;     // Infrared light
+
+
+    // Calculate Lux using the extracted values
+    float lux = tsl.calculateLux(ch0, ch1);
+
+
+    // Prepare temperature and humidity data
+    float temperature = NAN;  // Use NaN if SHT31 sensor is unavailable
+    float humidity = NAN;
+
+
+    // Read temperature and humidity from the SHT31 sensor if it's available
+    if (sht31.begin()) {
+      temperature = sht31.readTemperature();
+      humidity = sht31.readHumidity();
+    }
+
+
+    // Construct the response in plain text format
+    String data = "Sensor Data:\n";
+    data += "Lux: " + String(lux) + " Lux\n";
+
+
+    // Only display temperature and humidity if available
+    if (!isnan(temperature) && !isnan(humidity)) {
+      data += "Temperature: " + String(temperature) + " °C\n";
+      data += "Humidity: " + String(humidity) + " %\n";
+    } else {
+      data += "Temperature and Humidity: Data not available\n";
+    }
+
+
+    // Send the data as a plain text response
+    server.send(200, "text/plain", data);
+  });
+
+
+  // Start the web server
+  server.begin();
+}
+
+
+void loop() {
+  server.handleClient();
+}
+
+
+
