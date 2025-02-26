@@ -1,302 +1,147 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, FlatList, ScrollView, TextInput, StyleSheet, Switch } from 'react-native';
-import Ionicons from 'react-native-vector-icons/Ionicons';
-import { NavigationContainer } from '@react-navigation/native';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { View, Text, TextInput, Button, StyleSheet, ActivityIndicator, ScrollView } from 'react-native';
+import axios from 'axios';
 
 
-const Tab = createBottomTabNavigator();
+const App = () => {
+ const [ssid, setSsid] = useState('');
+ const [password, setPassword] = useState('');
+ const [status, setStatus] = useState('');
+ const [loading, setLoading] = useState(false);
+ const [terminalData, setTerminalData] = useState('');
+ const [connected, setConnected] = useState(false);
 
 
-// Serial Terminal Tab with Lux, Temperature, and Humidity Data
-const SerialTerminalTab = () => {
- const [lux, setLux] = useState<number | null>(null);
- const [temperature, setTemperature] = useState<number | null>(null);
- const [humidity, setHumidity] = useState<number | null>(null);
- const [terminalData, setTerminalData] = useState<string>('Fetching Sensor Data...');
- const [message, setMessage] = useState<string>(''); // Store message to send to Arduino
- const [errorMessage, setErrorMessage] = useState<string>('');
+ const sendCredentials = async () => {
+   setLoading(true);
+   setStatus('Sending credentials...') ;
+   if (ssid === '' || password === '') {
+     setStatus('Please enter both SSID and Password.');
+     setLoading(false);
+     return;
+   }
 
 
- // Function to fetch sensor data (lux, temperature, humidity)
- useEffect(() => {
-   const fetchSensorData = async () => {
-     try {
-       const response = await fetch('http://192.168.2.38/sensorData'); // ESP32 IP address
-       if (response.ok) {
-         const data = await response.json();
-         setLux(data.lux);
-         setTemperature(data.temperature);
-         setHumidity(data.humidity);
-         setTerminalData(
-           `Lux: ${data.lux} \nTemperature: ${data.temperature}°C \nHumidity: ${data.humidity}%`
-         );
-       } else {
-         setErrorMessage('Failed to fetch sensor data');
-       }
-     } catch (error) {
-       setErrorMessage('Error fetching sensor data');
+   try {
+     const formData = new FormData();
+     formData.append('ssid', ssid);
+     formData.append('password', password);
+
+
+     const response = await axios.post('http://192.168.4.1/set', formData, {
+       headers: { 'Content-Type': 'multipart/form-data' },
+     });
+
+
+     if (response.status === 200) {
+       setStatus('Credentials sent successfully!');
+       setConnected(true);
+       fetchData(); // Start fetching data after connection
+     } else {
+       setStatus('Failed to send credentials.');
      }
-   };
-
-
-   fetchSensorData(); // Initial fetch
-   const intervalId = setInterval(fetchSensorData, 5000); // Fetch every 5 seconds
-   return () => clearInterval(intervalId); // Cleanup interval on unmount
- }, []);
-
-
- // Function to send message to Arduino
- const sendMessageToArduino = async () => {
-   if (message.trim()) {
-     try {
-       const response = await fetch('http://192.168.2.38/sendMessage', {
-         method: 'POST',
-         headers: { 'Content-Type': 'application/json' },
-         body: JSON.stringify({ message }),
-       });
-
-
-       if (response.ok) {
-         setMessage('');
-         setTerminalData((prev) => prev + '\nSent: ' + message);
-       } else {
-         setErrorMessage('Failed to send message');
-       }
-     } catch (error) {
-       setErrorMessage('Error sending message');
-     }
+   } catch (error) {
+     console.error('Error sending credentials:', error);
+     setStatus('Error sending credentials.');
+   } finally {
+     setLoading(false);
    }
  };
 
 
- return (
-   <View style={styles.tabContainer}>
-     <Text style={styles.tabTitle}>Serial Terminal</Text>
-     {errorMessage ? (
-       <Text style={styles.errorMessage}>{errorMessage}</Text>
-     ) : (
-       <ScrollView style={styles.terminalData}>
-         <Text style={styles.terminalText}>{terminalData}</Text>
-       </ScrollView>
-     )}
-     <TextInput
-       style={styles.textInput}
-       placeholder="Enter message to send"
-       value={message}
-       onChangeText={setMessage}
-     />
-     <TouchableOpacity onPress={sendMessageToArduino} style={styles.button}>
-       <Text style={styles.buttonText}>Send Message</Text>
-     </TouchableOpacity>
-   </View>
- );
-};
-
-
-// Network Information Tab
-const NetworkInfoTab = () => {
- const networkInfo = {
-   ssid: 'BELL630', // Replace with the actual SSID you want to display
-   link: 'http://192.168.2.38', // Replace with the actual network link
+ // Fetch sensor data continuously from the ESP32
+ const fetchData = async () => {
+   try {
+     const response = await axios.get('http://192.168.4.1/data');
+     setTerminalData(response.data);
+   } catch (error) {
+     console.error('Error fetching data:', error);
+     setTerminalData('Error fetching data.');
+   }
  };
 
 
+ useEffect(() => {
+   if (connected) {
+     const interval = setInterval(fetchData, 5000); // Fetch data every 5 seconds
+     return () => clearInterval(interval); // Cleanup interval
+   }
+ }, [connected]);
+
+
  return (
-   <View style={styles.tabContainer}>
-     <Text style={styles.tabTitle}>Network Information</Text>
-     <Text style={styles.networkInfo}>SSID: {networkInfo.ssid}</Text>
-     <Text style={styles.networkInfo}>Network Link: {networkInfo.link}</Text>
+   <View style={styles.container}>
+     <Text style={styles.header}>Enter Wi-Fi Credentials</Text>
+
+
+     <TextInput
+       style={styles.input}
+       placeholder="Enter Wi-Fi SSID"
+       value={ssid}
+       onChangeText={setSsid}
+     />
+     <TextInput
+       style={styles.input}
+       placeholder="Enter Wi-Fi Password"
+       secureTextEntry
+       value={password}
+       onChangeText={setPassword}
+     />
+
+
+     <Button title="Send Credentials" onPress={sendCredentials} />
+
+
+     {loading && <ActivityIndicator size="large" color="#0000ff" />}
+     <Text style={styles.status}>{status}</Text>
+
+
+     {connected && (
+       <ScrollView style={styles.terminalBox}>
+         <Text>{terminalData}</Text>
+       </ScrollView>
+     )}
    </View>
  );
 };
 
 
-// Motor Control Tab
-const MotorControlTab = () => {
- const [motorSpeed, setMotorSpeed] = useState(0);
-
-
- const increaseMotorSpeed = () => setMotorSpeed((prev) => prev + 10);
- const decreaseMotorSpeed = () => setMotorSpeed((prev) => prev - 10);
-
-
- return (
-   <View style={styles.tabContainer}>
-     <Text style={styles.tabTitle}>Motor Control</Text>
-     <Text style={styles.motorSpeed}>Motor Speed: {motorSpeed}</Text>
-     <View style={styles.buttonContainer}>
-       <TouchableOpacity onPress={increaseMotorSpeed} style={styles.largeButton}>
-         <Text style={styles.buttonText}>+</Text>
-       </TouchableOpacity>
-       <TouchableOpacity onPress={decreaseMotorSpeed} style={styles.largeButton}>
-         <Text style={styles.buttonText}>-</Text>
-       </TouchableOpacity>
-     </View>
-   </View>
- );
-};
-
-
-// Settings Tab
-const SettingsTab = () => {
- const [isAutoConnect, setIsAutoConnect] = useState(true);
- const [isSoundEnabled, setIsSoundEnabled] = useState(false);
-
-
- const toggleAutoConnect = () => setIsAutoConnect(!isAutoConnect);
- const toggleSound = () => setIsSoundEnabled(!isSoundEnabled);
-
-
- return (
-   <View style={styles.tabContainer}>
-     <Text style={styles.tabTitle}>Settings</Text>
-     <View style={styles.settingsContainer}>
-       <Text style={styles.settingsText}>Auto Connect: </Text>
-       <Switch
-         value={isAutoConnect}
-         onValueChange={toggleAutoConnect}
-         trackColor={{ false: '#767577', true: '#81b0ff' }}
-         thumbColor={isAutoConnect ? '#f5dd4b' : '#f4f3f4'}
-       />
-     </View>
-
-
-     <View style={styles.settingsContainer}>
-       <Text style={styles.settingsText}>Enable Sound: </Text>
-       <Switch
-         value={isSoundEnabled}
-         onValueChange={toggleSound}
-         trackColor={{ false: '#767577', true: '#81b0ff' }}
-         thumbColor={isSoundEnabled ? '#f5dd4b' : '#f4f3f4'}
-       />
-     </View>
-   </View>
- );
-};
-
-
-// Main App
-const App = () => {
- return (
-   <NavigationContainer>
-     <Tab.Navigator
-       screenOptions={{
-         headerShown: false,
-         tabBarStyle: {
-           backgroundColor: '#000', // Black background for the tab bar
-           borderTopWidth: 0,
-           height: 60,
-         },
-       }}
-     >
-       <Tab.Screen
-         name="Network"
-         component={NetworkInfoTab}
-         options={{
-           tabBarIcon: () => <Ionicons name="wifi" size={24} color="#fff" />,
-         }}
-       />
-       <Tab.Screen
-         name="Terminal"
-         component={SerialTerminalTab}
-         options={{
-           tabBarIcon: () => <Ionicons name="terminal" size={24} color="#fff" />,
-         }}
-       />
-       <Tab.Screen
-         name="Motor"
-         component={MotorControlTab}
-         options={{
-           tabBarIcon: () => <Ionicons name="speedometer" size={24} color="#fff" />,
-         }}
-       />
-       <Tab.Screen
-         name="Settings"
-         component={SettingsTab}
-         options={{
-           tabBarIcon: () => <Ionicons name="settings" size={24} color="#fff" />,
-         }}
-       />
-     </Tab.Navigator>
-   </NavigationContainer>
- );
-};
-
-
-// Styles
 const styles = StyleSheet.create({
- tabContainer: {
+ container: {
    flex: 1,
-   alignItems: 'center',
    justifyContent: 'center',
-   backgroundColor: '#000', // Black background for the entire tab container
+   alignItems: 'center',
+   padding: 20,
  },
- tabTitle: {
+ header: {
    fontSize: 24,
-   fontWeight: 'bold',
-   color: '#fff',
    marginBottom: 20,
  },
- button: {
-   backgroundColor: '#4CAF50',
-   padding: 10,
-   borderRadius: 5,
-   marginBottom: 10,
- },
- buttonText: {
-   fontSize: 18,
-   color: '#fff',
- },
- textInput: {
+ input: {
    height: 40,
-   borderColor: '#fff',
+   borderColor: '#ddd',
    borderWidth: 1,
    marginBottom: 10,
    paddingHorizontal: 10,
-   color: '#fff',
-   width: '80%',
+   width: '100%',
  },
- motorSpeed: {
-   fontSize: 24,
-   color: '#fff',
- },
- settingsContainer: {
-   flexDirection: 'row',
-   alignItems: 'center',
-   justifyContent: 'center',
-   marginVertical: 10,
- },
- settingsText: {
-   fontSize: 18,
-   color: '#fff',
- },
- largeButton: {
-   backgroundColor: '#4CAF50',
-   padding: 20,
-   borderRadius: 5,
-   margin: 10,
- },
- errorMessage: {
-   color: 'red',
+ status: {
+   marginTop: 20,
    fontSize: 16,
+   color: 'gray',
  },
- terminalData: {
+ terminalBox: {
+   marginTop: 20,
    padding: 10,
-   backgroundColor: '#333',
-   flex: 1,
-   marginBottom: 20,
- },
- terminalText: {
-   fontSize: 16,
-   color: '#fff',
- },
- networkInfo: {
-   fontSize: 18,
-   color: '#fff',
-   textAlign: 'center',
+   borderColor: '#ddd',
+   borderWidth: 1,
+   width: '100%',
+   height: 200,
+   backgroundColor: '#f0f0f0',
  },
 });
 
 
 export default App;
+
+
